@@ -225,8 +225,9 @@ class AwsBatchTaskHandler extends TaskHandler {
 
     protected SubmitJobRequest newSubmitRequest(TaskRun task) {
 
+        def awsCli = Global.GetAwsCliPath() 
         // the cmd list to launch it
-        def cmd = ['bash','-c', "aws s3 cp s3:/${wrapperFile} - | bash 2>&1 | tee $TaskRun.CMD_LOG".toString() ] as List<String>
+        def cmd = ['bash','-c', "$awsCli s3 cp s3:/${wrapperFile} - | bash 2>&1 | tee $TaskRun.CMD_LOG".toString() ] as List<String>
 
         def jobQueueAndDefinition = getJobQueueAndDefinition(task)
         /*
@@ -308,6 +309,7 @@ class AwsBatchFileCopyStrategy extends SimpleFileCopyStrategy {
      */
     String getBeforeStartScript() {
 	
+        def awsCli = Global.GetAwsCliPath() 
 		def S3StorageClass = Global.AwsGetStorageClass()
 		def S3Encryption = Global.AwsGetStorageEncryption()
 		def S3EncryptionCommand = ""
@@ -318,13 +320,17 @@ class AwsBatchFileCopyStrategy extends SimpleFileCopyStrategy {
         """
         # aws helper
         nxf_s3_upload() {
-          local name=\$1
-          local s3path=\$2
-          if [[ -d \$name ]]; then
-            aws s3 cp \$name \$s3path --quiet --storage-class $S3StorageClass --recursive $S3EncryptionCommand
-          else
-            aws s3 cp \$name \$s3path --quiet --storage-class $S3StorageClass $S3EncryptionCommand
-          fi
+            local pattern=\$1
+            local s3path=\$2
+            for name in \$pattern;do
+              if [[ -d "\$name" ]]; then
+                echo "$awsCli s3 cp \$name \$s3path/\$name --quiet --storage-class $S3StorageClass --recursive $S3EncryptionCommand"
+                $awsCli s3 cp \$name \$s3path/\$name --quiet --storage-class $S3StorageClass --recursive $S3EncryptionCommand
+              else
+                echo "$awsCli s3 cp \$name \$s3path/\$name --quiet --storage-class $S3StorageClass $S3EncryptionCommand"
+                $awsCli s3 cp \$name \$s3path/\$name --quiet --storage-class $S3StorageClass $S3EncryptionCommand
+              fi
+          done
         }
 
         """.stripIndent()
@@ -359,7 +365,7 @@ class AwsBatchFileCopyStrategy extends SimpleFileCopyStrategy {
         if( normalized ) {
             result << ""
             normalized.each {
-                result << "nxf_s3_upload $it s3:/${targetDir.resolve(it)} || true" // <-- add true to avoid it stops on errors
+                result << "nxf_s3_upload '$it' s3:/${targetDir} || true" // <-- add true to avoid it stops on errors
             }
         }
 
@@ -371,7 +377,7 @@ class AwsBatchFileCopyStrategy extends SimpleFileCopyStrategy {
      */
     @Override
     String touchFile( Path file ) {
-        "touch ${file.name} && nxf_s3_upload ${file.name} s3:/${file} && rm ${file.name}"
+        "touch ${file.name} && nxf_s3_upload ${file.name} s3:/${file.getParent()} && rm ${file.name}"
     }
 
     /**
@@ -387,13 +393,13 @@ class AwsBatchFileCopyStrategy extends SimpleFileCopyStrategy {
      */
     @Override
     String copyFile( String name, Path target ) {
-        "nxf_s3_upload ${Escape.path(name)} s3:/${Escape.path(target)}"
+        "nxf_s3_upload ${Escape.path(name)} s3:/${Escape.path(target.getParent())}"
     }
 
     /**
      * {@inheritDoc}
      */
     String exitFile( Path path ) {
-        "${path.name} && nxf_s3_upload ${Escape.path(path.name)} s3:/${Escape.path(path)} || true"
+        "${path.name} && nxf_s3_upload ${Escape.path(path.name)} s3:/${Escape.path(path.getParent())} || true"
     }
 }
